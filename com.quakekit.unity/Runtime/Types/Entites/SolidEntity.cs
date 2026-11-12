@@ -10,27 +10,9 @@ namespace QuakeKit
         public string className;
         public GameObject prefab;
 
-        public static void SetupPrefab(GameObject go, Dictionary<string,string> attributes)
+        public static void SetupPrefab(GameObject go, Dictionary<string, string> attributes, float inverseScale = 1)
         {
-            var parser = go.GetComponent<EntityPropertyReceiver>();
-            var receiver = go.GetComponent<EntityEventReceiver>();
-            var emitter = go.GetComponent<EntityEventEmitter>();
-            foreach (var prop in attributes)
-            {
-                switch (prop.Key)
-                {
-                    case "target" when emitter != null:
-                        emitter.SetTarget(prop.Value);
-                        break;
-                    case "targetname" when receiver != null:
-                        receiver.targetName = prop.Value;
-                        break;
-                }
-
-                if (prop.Key != "classname" && parser != null) parser.OnProperty(prop.Key, prop.Value);
-            }
-
-            return;
+            EntityAttributes.Apply(go, attributes, inverseScale);
         }
     }
 }

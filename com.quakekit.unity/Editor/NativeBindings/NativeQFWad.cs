@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Collections.Generic;
 
 #nullable enable
@@ -7,217 +6,141 @@ using System.Collections.Generic;
 namespace QuakeKit
 {
     /// <summary>
-    /// Native bindings for libquake WAD file API
-    /// WAD files contain texture archives used by Quake maps
+    /// A WAD2 texture archive loaded through libquake.
     /// </summary>
     public class NativeQFWad : IDisposable
     {
-        // ============================================================================
-        // P/Invoke Declarations
-        // ============================================================================
+        private IntPtr _wad = IntPtr.Zero;
 
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr QLibWad_Load(
-            [MarshalAs(UnmanagedType.LPStr)] string filePath,
-            IntPtr paletteData);
-
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr QLibWad_ExportAll(IntPtr wadPtr);
-
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr QLibWad_GetTexture(
-            IntPtr wadPtr,
-            [MarshalAs(UnmanagedType.LPStr)] string textureName);
-
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern void QLibWad_FreeData(IntPtr data);
-
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern void QLibWad_FreeTexture(IntPtr texture);
-
-        [DllImport("quakelib", CallingConvention = CallingConvention.Cdecl)]
-        private static extern void QLibWad_Destroy(IntPtr wadPtr);
-
-        // ============================================================================
-        // Fields
-        // ============================================================================
-
-        private IntPtr _wadPtr = IntPtr.Zero;
-        private IntPtr _dataPtr = IntPtr.Zero;
-        private QLibWadData _data;
-        private bool _disposed = false;
-
-        // ============================================================================
-        // Public Properties
-        // ============================================================================
-
-        public List<WadTexture> Textures { get; private set; } = new List<WadTexture>();
-
-        // ============================================================================
-        // Public Methods
-        // ============================================================================
+        /// <summary>Texture names and sizes, filled by GetTextureNames(). Data is empty, use GetTexture().</summary>
+        public List<WadTexture> Textures { get; } = new List<WadTexture>();
 
         /// <summary>
-        /// Load a WAD file
+        /// Opens the file. Throws a QLibException if it is not a valid WAD2 file.
         /// </summary>
-        /// <param name="wadPath">Path to the .wad file</param>
-        /// <param name="paletteData">Optional 768-byte palette data (256 RGB values). Pass IntPtr.Zero to use default Quake palette.</param>
-        public void Load(string wadPath, IntPtr paletteData = default)
+        public void Load(string wadPath, bool flipHorizontal = false)
         {
-            if (_wadPtr != IntPtr.Zero)
-            {
-                Dispose();
-            }
-
-            _wadPtr = QLibWad_Load(wadPath, paletteData);
-
-            if (_wadPtr == IntPtr.Zero)
-            {
-                throw new Exception($"Failed to load WAD file: {wadPath}");
-            }
+            QLibNative.EnsureCompatible();
+            Release();
+            QLibNative.Check(QLibNative.QLibWad_Load(wadPath, flipHorizontal ? 1u : 0u, out _wad), $"Loading {wadPath}");
         }
 
         /// <summary>
-        /// Get the list of all texture names in the WAD file (no pixel data is loaded).
-        /// Use GetTexture(name) to load actual texture data for specific textures.
-        /// This uses lazy loading - texture dimensions and pixel data are not loaded until GetTexture() is called.
+        /// Fills Textures with the name and size of every texture, without pixel data.
         /// </summary>
         public void GetTextureNames()
         {
-            if (_wadPtr == IntPtr.Zero)
-            {
-                throw new InvalidOperationException("WAD not loaded. Call Load() first.");
-            }
-
-            // Free previous data if exists
-            if (_dataPtr != IntPtr.Zero)
-            {
-                QLibWad_FreeData(_dataPtr);
-                _dataPtr = IntPtr.Zero;
-            }
-
-            // Get all texture names (lazy loading - no pixel data)
-            _dataPtr = QLibWad_ExportAll(_wadPtr);
-            if (_dataPtr == IntPtr.Zero)
-            {
-                throw new Exception("Failed to export WAD data");
-            }
-
-            _data = Marshal.PtrToStructure<QLibWadData>(_dataPtr);
-
-            // Parse texture metadata only (width/height/data will be 0/empty due to lazy loading)
-            // To get actual texture data, use GetTexture(name) instead
+            EnsureLoaded();
             Textures.Clear();
-            for (uint i = 0; i < _data.textureCount; i++)
+            uint count = QLibNative.QLibWad_GetTextureCount(_wad);
+            for (uint i = 0; i < count; i++)
             {
-                IntPtr texPtr = IntPtr.Add(_data.textures, (int)(i * Marshal.SizeOf<QLibWadTexture>()));
-                QLibWadTexture texture = Marshal.PtrToStructure<QLibWadTexture>(texPtr);
-                Textures.Add(new WadTexture(texture));
+                QLibNative.Check(QLibNative.QLibWad_GetTextureInfo(_wad, i, out var info), "GetTextureInfo");
+                Textures.Add(new WadTexture(info, Array.Empty<byte>(), Array.Empty<byte>(), Array.Empty<byte>()));
             }
         }
 
         /// <summary>
-        /// Get a specific texture by name
+        /// A texture with RGBA pixels, null if the WAD has no texture with this name (case insensitive).
         /// </summary>
-        /// <param name="textureName">Name of the texture</param>
-        /// <returns>WadTexture or null if not found</returns>
         public WadTexture? GetTexture(string textureName)
         {
-            if (_wadPtr == IntPtr.Zero)
-            {
-                throw new InvalidOperationException("WAD not loaded. Call Load() first.");
-            }
-
-            IntPtr texPtr = QLibWad_GetTexture(_wadPtr, textureName);
-            if (texPtr == IntPtr.Zero)
-            {
-                return null;
-            }
-
-            QLibWadTexture texture = Marshal.PtrToStructure<QLibWadTexture>(texPtr);
-            var result = new WadTexture(texture);
-
-            // Free the single texture data
-            QLibWad_FreeTexture(texPtr);
-            return result;
+            EnsureLoaded();
+            int index = QLibNative.QLibWad_FindTexture(_wad, textureName);
+            return index < 0 ? null : GetTexture(index);
         }
 
-        // ============================================================================
-        // IDisposable Implementation
-        // ============================================================================
+        /// <summary>Number of textures, valid indices for GetTexture(int).</summary>
+        public int TextureCount
+        {
+            get
+            {
+                EnsureLoaded();
+                return (int)QLibNative.QLibWad_GetTextureCount(_wad);
+            }
+        }
+
+        /// <summary>
+        /// A texture with RGBA pixels by index, 0 to TextureCount - 1. Sky textures come as two layers (Data is the
+        /// back layer, SkyFront the clouds), each half the width of the WAD texture.
+        /// </summary>
+        public WadTexture GetTexture(int index)
+        {
+            EnsureLoaded();
+            if (index < 0 || index >= TextureCount)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            QLibNative.Check(QLibNative.QLibWad_GetTextureInfo(_wad, (uint)index, out var info), "GetTextureInfo");
+            QLibResult Copy(QLibTextureLayer layer, byte[] px) =>
+                QLibNative.QLibWad_CopyTextureLayer(_wad, (uint)index, layer, px, (uint)px.Length);
+            return new WadTexture(info,
+                TextureReader.Layer(info, QLibTextureFlags.HasData, QLibTextureLayer.Albedo, Copy),
+                TextureReader.Layer(info, QLibTextureFlags.HasEmission, QLibTextureLayer.Emission, Copy),
+                TextureReader.Layer(info, QLibTextureFlags.HasSkyFront, QLibTextureLayer.SkyFront, Copy));
+        }
+
+        private void EnsureLoaded()
+        {
+            if (_wad == IntPtr.Zero)
+                throw new InvalidOperationException("WAD not loaded. Call Load() first.");
+        }
+
+        private void Release()
+        {
+            if (_wad != IntPtr.Zero)
+            {
+                QLibNative.QLibWad_Destroy(_wad);
+                _wad = IntPtr.Zero;
+            }
+
+            Textures.Clear();
+        }
 
         public void Dispose()
         {
-            Dispose(true);
+            Release();
             GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
-            {
-                if (_dataPtr != IntPtr.Zero)
-                {
-                    QLibWad_FreeData(_dataPtr);
-                    _dataPtr = IntPtr.Zero;
-                }
-
-                if (_wadPtr != IntPtr.Zero)
-                {
-                    QLibWad_Destroy(_wadPtr);
-                    _wadPtr = IntPtr.Zero;
-                }
-
-                Textures.Clear();
-
-                _disposed = true;
-            }
         }
 
         ~NativeQFWad()
         {
-            Dispose(false);
+            Release();
         }
     }
 
-    // ============================================================================
-    // Texture Wrapper Class
-    // ============================================================================
-
-    /// <summary>
-    /// Represents a texture from a WAD file
-    /// </summary>
     public class WadTexture
     {
-        public string Name { get; private set; }
-        public uint Width { get; private set; }
-        public uint Height { get; private set; }
-        public byte[] Data { get; private set; }
+        public string Name { get; }
+        /// <summary>Sky: the size of one layer.</summary>
+        public uint Width { get; }
+        public uint Height { get; }
+        public QLibTextureFlags Flags { get; }
+        public bool IsSky => (Flags & QLibTextureFlags.Sky) != 0;
+        /// <summary>'{' texture: transparent pixels, needs an alpha tested material.</summary>
+        public bool HasAlpha => (Flags & QLibTextureFlags.Alpha) != 0;
+        public bool IsLiquid => (Flags & QLibTextureFlags.Liquid) != 0;
 
-        public unsafe WadTexture(QLibWadTexture texture)
+        /// <summary>RGBA pixels, first row is the top of the texture unless the WAD was loaded flipped. Sky: the
+        /// back layer.</summary>
+        public byte[] Data { get; }
+
+        /// <summary>True if the texture has fullbright pixels (palette 224..254).</summary>
+        public bool HasEmission => (Flags & QLibTextureFlags.HasEmission) != 0;
+
+        /// <summary>RGBA like Data, black except the fullbright pixels. Empty without emission.</summary>
+        public byte[] Emission { get; }
+
+        /// <summary>Sky only: the cloud layer, RGBA like Data, alpha 0 where the back layer shows.</summary>
+        public byte[] SkyFront { get; }
+
+        internal WadTexture(QLibTextureInfo info, byte[] data, byte[] emission, byte[] skyFront)
         {
-            // Convert fixed byte buffer name to string (null-terminated C string)
-            byte[] nameBytes = new byte[16];
-            for (int i = 0; i < 16; i++)
-            {
-                nameBytes[i] = texture.name[i];
-            }
-            int nullIndex = Array.IndexOf(nameBytes, (byte)0);
-            int nameLength = nullIndex >= 0 ? nullIndex : 16;
-            Name = System.Text.Encoding.ASCII.GetString(nameBytes, 0, nameLength);
-
-            Width = texture.width;
-            Height = texture.height;
-
-            // Debug: Check what we're reading
-            var structSize = System.Runtime.InteropServices.Marshal.SizeOf<QLibWadTexture>();
-
-            // Use the dataSize from the C API (properly set after v1.0.1 RGBA fix)
-            Data = new byte[texture.dataSize];
-            if (texture.data != IntPtr.Zero && texture.dataSize > 0)
-            {
-                Marshal.Copy(texture.data, Data, 0, (int)texture.dataSize);
-            }
+            Name = QLibNative.PtrToString(info.name);
+            Width = info.width;
+            Height = info.height;
+            Flags = info.flags;
+            Data = data;
+            Emission = emission;
+            SkyFront = skyFront;
         }
     }
 }

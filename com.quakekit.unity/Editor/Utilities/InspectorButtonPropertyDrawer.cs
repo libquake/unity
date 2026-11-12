@@ -1,58 +1,48 @@
-using UnityEngine;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 using System.Reflection;
+using UnityEditor;
+using UnityEngine;
 
-/// <summary>
-/// This attribute can only be applied to fields because its
-/// associated PropertyDrawer only operates on fields (either
-/// public or tagged with the [SerializeField] attribute) in
-/// the target MonoBehaviour.
-/// </summary>
-[System.AttributeUsage(System.AttributeTargets.Field)]
-public class InspectorButtonAttribute : PropertyAttribute
+namespace QuakeKit
 {
-    public static float kDefaultButtonWidth = 100;
-
-    public readonly string MethodName;
-
-    private float _buttonWidth = kDefaultButtonWidth;
-    public float ButtonWidth
+    /// <summary>
+    /// Draws a field as a button that calls MethodName on the inspected object. Only works on serialized fields.
+    /// </summary>
+    [System.AttributeUsage(System.AttributeTargets.Field)]
+    public class InspectorButtonAttribute : PropertyAttribute
     {
-        get { return _buttonWidth; }
-        set { _buttonWidth = value; }
-    }
+        public const float DefaultButtonWidth = 100;
 
-    public InspectorButtonAttribute(string MethodName)
-    {
-        this.MethodName = MethodName;
-    }
-}
+        public readonly string MethodName;
 
-#if UNITY_EDITOR
-[CustomPropertyDrawer(typeof(InspectorButtonAttribute))]
-public class InspectorButtonPropertyDrawer : PropertyDrawer
-{
-    private MethodInfo _eventMethodInfo = null;
+        public float ButtonWidth { get; set; } = DefaultButtonWidth;
 
-    public override void OnGUI(Rect position, SerializedProperty prop, GUIContent label)
-    {
-        InspectorButtonAttribute inspectorButtonAttribute = (InspectorButtonAttribute)attribute;
-        Rect buttonRect = new Rect(position.x + (position.width - inspectorButtonAttribute.ButtonWidth) * 0.5f, position.y, inspectorButtonAttribute.ButtonWidth, position.height);
-        if (GUI.Button(buttonRect, label.text))
+        public InspectorButtonAttribute(string methodName)
         {
-            System.Type eventOwnerType = prop.serializedObject.targetObject.GetType();
-            string eventName = inspectorButtonAttribute.MethodName;
+            MethodName = methodName;
+        }
+    }
 
-            if (_eventMethodInfo == null)
-                _eventMethodInfo = eventOwnerType.GetMethod(eventName, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+    [CustomPropertyDrawer(typeof(InspectorButtonAttribute))]
+    public class InspectorButtonPropertyDrawer : PropertyDrawer
+    {
+        private MethodInfo _eventMethodInfo;
+
+        public override void OnGUI(Rect position, SerializedProperty prop, GUIContent label)
+        {
+            var buttonAttribute = (InspectorButtonAttribute)attribute;
+            var buttonRect = new Rect(position.x + (position.width - buttonAttribute.ButtonWidth) * 0.5f, position.y,
+                buttonAttribute.ButtonWidth, position.height);
+            if (!GUI.Button(buttonRect, label.text))
+                return;
+
+            var ownerType = prop.serializedObject.targetObject.GetType();
+            _eventMethodInfo ??= ownerType.GetMethod(buttonAttribute.MethodName,
+                BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
 
             if (_eventMethodInfo != null)
                 _eventMethodInfo.Invoke(prop.serializedObject.targetObject, null);
             else
-                Debug.LogWarning(string.Format("InspectorButton: Unable to find method {0} in {1}", eventName, eventOwnerType));
+                Debug.LogWarning($"InspectorButton: Unable to find method {buttonAttribute.MethodName} in {ownerType}");
         }
     }
 }
-#endif

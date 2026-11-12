@@ -1,258 +1,255 @@
-using System.Collections.Generic;
-using System.Diagnostics;
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.AssetImporters;
 using UnityEditor.Events;
 using UnityEngine;
-using UnityEngine.Events;
-using System.Linq;
-using Debug = UnityEngine.Debug;
-
 
 namespace QuakeKit
 {
     /// <summary>
-    /// Import any files with the .map extension
+    /// Imports .map files as a prefab: worldspawn with its mesh, collision and lightmap, plus one object per
+    /// entity, grouped by class name.
     /// </summary>
-    [ScriptedImporter(1, "map", AllowCaching = true)]
+    [ScriptedImporter(3, "map", AllowCaching = true)]
     public sealed class QMapAssetImporter : ScriptedImporter
     {
-        public QnityMapConfigData configData;
+        [Tooltip("Map config for this map, the project default from Project Settings > QuakeKit when empty.")]
+        public QKitMapConfigData configData;
+
+        // state of the running import, the importer object is reused for later imports
+        private QKitMapConfigData _config;
         private NativeQFMap _nativeMap;
+        private SolidEntityGenerator _solidEntityGenerator;
+        private List<string> _requiredWads;
+        private bool _lightmapped;
         private readonly Dictionary<string, Material> _usedMaterials = new Dictionary<string, Material>();
         private readonly Dictionary<string, int> _classCount = new Dictionary<string, int>();
         private readonly Dictionary<string, GameObject> _entityFolders = new Dictionary<string, GameObject>();
-        private SolidEntityGenerator _solidEntityGenerator;
-        private List<string> _requiredWads;
-
 
         public override void OnImportAsset(AssetImportContext ctx)
         {
+            // TrenchBroom's autosaves
             if (ctx.assetPath.Contains("autosave/"))
+                return;
+
+            _usedMaterials.Clear();
+            _classCount.Clear();
+            _entityFolders.Clear();
+
+            _config = configData;
+            if (_config == null)
             {
+                var settings = QKitProjectSettingsData.GetSettings();
+                if (settings != null)
+                {
+                    ctx.DependsOnSourceAsset(QKitProjectSettingsData.SettingsPath);
+                    _config = settings.GetMapConfigData();
+                }
+            }
+
+            if (_config == null)
+            {
+                ctx.LogImportError($"[QuakeKit] Cannot import {ctx.assetPath}: no map config. Assign one or create " +
+                                   "the project settings via Tools > QuakeKit > Initialize Project Settings.");
                 return;
             }
 
+            // reimport when the config changes
+            var configPath = AssetDatabase.GetAssetPath(_config);
+            if (!string.IsNullOrEmpty(configPath))
+                ctx.DependsOnSourceAsset(configPath);
+
+            _solidEntityGenerator = new SolidEntityGenerator(_config);
             try
             {
-                if (configData == null)
-                {
-                    var settings = QnityProjectSettingsData.GetOrCreateSettings();
-                    configData = settings.GetMapConfigData();
-                }
-
-                _solidEntityGenerator = new SolidEntityGenerator(configData);
-                Stopwatch stopwatch = Stopwatch.StartNew();
-
-                _nativeMap = new NativeQFMap();
-
-                // Load MAP file with CSG enabled (parse only, no geometry yet)
-                _nativeMap.Load(ctx.assetPath, enableCSG: true, convertToOpenGL: false);
-
-                // Get required WADs for texture prioritization
-                _requiredWads = _nativeMap.GetRequiredWads();
-
-                // Get all texture names used in the map
-                var textureNames = _nativeMap.GetTextureNames();
-
-                // Register texture sizes from Unity materials
-                foreach (var textureName in textureNames)
-                {
-                    // Get material (this will create/load it if needed)
-                    var mat = MaterialManager.Instance.GetMaterial(textureName, configData.textureFolder, configData.materialFolder, _requiredWads);
-
-                    if (mat != null && mat.mainTexture != null)
-                    {
-                        uint width = (uint)mat.mainTexture.width;
-                        uint height = (uint)mat.mainTexture.height;
-                        _nativeMap.RegisterTextureSize(textureName, width, height);
-                    }
-                    else
-                    {
-                        // Fallback to default size if texture not found
-                        _nativeMap.RegisterTextureSize(textureName, 64, 64);
-                        Debug.LogWarning($"[QMapImporter] Texture '{textureName}' not found, using default size 64x64");
-                    }
-                }
-
-                // Generate geometry with proper UVs based on registered texture sizes
-                _nativeMap.GenerateGeometry();
-
-                // Set surface types for special textures
-                _nativeMap.SetFaceTypes(configData.clipTexture, SurfaceType.CLIP);
-                _nativeMap.SetFaceTypes(configData.skipTexture, SurfaceType.SKIP);
-                _nativeMap.SetFaceTypes(configData.skyTexture, SurfaceType.NODRAW);
-
-                // Export all geometry and entity data
-                _nativeMap.ExportData();
-
-                // Create worldspawn GameObject
-                GameObject worldSpawnObj = new GameObject("worldSpawn");
-                worldSpawnObj.isStatic = true; // Mark as static for lightmapping
-                ctx.AddObjectToAsset("worldSpawn", worldSpawnObj);
-
-                // Set worldspawn as the main asset (fixes icon issue)
-                ctx.SetMainObject(worldSpawnObj);
-
-                // Process worldspawn geometry (first solid entity)
-                if (_nativeMap.SolidEntities.Count > 0)
-                {
-                    var worldspawnEntity = _nativeMap.SolidEntities[0];
-
-                    var mr = worldSpawnObj.AddComponent<MeshRenderer>();
-                    var mf = worldSpawnObj.AddComponent<MeshFilter>();
-                    var mc = worldSpawnObj.AddComponent<MeshCollider>();
-
-                    var materials = new List<Material>();
-                    // Add mesh components directly to worldSpawnObj
-                    var meshes = _solidEntityGenerator.Generate(ref worldspawnEntity, (textureName) =>
-                    {
-                        var mat = MaterialManager.Instance.GetMaterial(textureName, configData.textureFolder, configData.materialFolder, _requiredWads);
-                        _usedMaterials.TryAdd(mat.name, mat);
-                        materials.Add(mat);
-                        return true;
-                    });
-
-                    if (meshes.Count > 0)
-                    {
-
-                        mr.sharedMaterials = materials.ToArray();
-
-                        var combinedMesh = new Mesh();
-                        var combineFilters = new CombineInstance[meshes.Count];
-                        for (int i = 0; i < meshes.Count; i++)
-                        {
-                            combineFilters[i].mesh = meshes[i];
-                            combineFilters[i].transform = mf.transform.localToWorldMatrix;
-                        }
-
-                        combinedMesh.CombineMeshes(combineFilters, false);
-                        combinedMesh.name = "worldspawn_mesh";
-
-                        // Clear UV2 to ensure clean state on reimport
-                        combinedMesh.uv2 = null;
-
-                        mf.sharedMesh = combinedMesh;
-                        mc.sharedMesh = combinedMesh;
-
-                        ctx.AddObjectToAsset("worldspawn_mesh", combinedMesh);
-                    }
-                }
-
-                foreach (var pent in _nativeMap.PointEntities)
-                {
-                    if (!_classCount.TryAdd(pent.ClassName, 0))
-                    {
-                        _classCount[pent.ClassName] += 1;
-                    }
-
-                    var entObj = CreatePointEntityObject(ctx, $"{pent.ClassName}_{_classCount[pent.ClassName]}", pent);
-                    if (entObj != null)
-                    {
-                        // Get or create the folder GameObject for this entity class
-                        if (!_entityFolders.TryGetValue(pent.ClassName, out var folderObj))
-                        {
-                            folderObj = new GameObject(pent.ClassName);
-                            folderObj.transform.parent = worldSpawnObj.transform;
-                            _entityFolders[pent.ClassName] = folderObj;
-                            ctx.AddObjectToAsset(pent.ClassName + "_folder", folderObj);
-                        }
-
-                        entObj.transform.parent = folderObj.transform;
-                    }
-                }
-
-                // Process remaining solid entities (skip first as it's worldspawn)
-                for (int i = 1; i < _nativeMap.SolidEntities.Count; i++)
-                {
-                    var sent = _nativeMap.SolidEntities[i];
-
-                    if (!_classCount.TryAdd(sent.ClassName, 0))
-                    {
-                        _classCount[sent.ClassName] += 1;
-                    }
-
-                    var entObj = CreateSolidEntityObject(ctx, $"{sent.ClassName}_{_classCount[sent.ClassName]}", sent);
-
-                    // Get or create the folder GameObject for this entity class
-                    if (!_entityFolders.TryGetValue(sent.ClassName, out var folderObj))
-                    {
-                        folderObj = new GameObject(sent.ClassName);
-                        folderObj.transform.parent = worldSpawnObj.transform;
-                        _entityFolders[sent.ClassName] = folderObj;
-                        ctx.AddObjectToAsset(sent.ClassName + "_folder", folderObj);
-                    }
-
-                    entObj.transform.parent = folderObj.transform;
-                }
-
-                foreach (var mat in _usedMaterials.Values.ToArray())
-                {
-                    ctx.AddObjectToAsset(mat.name, mat);
-                }
-
-                var evbus = worldSpawnObj.AddComponent<QnityEventBus>();
-
-                foreach (var c in worldSpawnObj.GetComponentsInChildren<EntityEventReceiver>())
-                {
-                    AddEventToBus(ref evbus, c.targetName, c.OnTrigger);
-                }
-
-                foreach (var c in worldSpawnObj.GetComponentsInChildren<EntityEventEmitter>())
-                {
-                    c.SetLocalEventBus(evbus);
-                }
-
-                stopwatch.Stop();
-            }
-            catch (Exception ex)
-            {
-                // Log detailed error information before re-throwing
-                Debug.LogError($"[QMapImporter] CRITICAL ERROR during map import: {ex?.Message ?? "Unknown error"}");
-                Debug.LogError($"[QMapImporter] Exception type: {ex?.GetType().Name}");
-                Debug.LogError($"[QMapImporter] Stack trace:\n{ex?.StackTrace}");
-
-                // Clean up native resources to prevent memory leaks
-                try
-                {
-                    _nativeMap?.Dispose();
-                }
-                catch (Exception disposeEx)
-                {
-                    Debug.LogError($"[QMapImporter] Error during cleanup: {disposeEx?.Message}");
-                }
-
-                // Create an empty object so Unity doesn't fail completely
-                var errorObj = new GameObject("MAP_IMPORT_FAILED");
-                ctx.AddObjectToAsset("error", errorObj);
-                ctx.SetMainObject(errorObj);
-
-                // Re-throw to show error in Unity console
-                throw new Exception($"Failed to import map file {ctx.assetPath}: {ex?.Message}", ex);
+                using (_nativeMap = new NativeQFMap())
+                    Import(ctx);
             }
             finally
             {
-                // Always dispose native resources
-                try
-                {
-                    _nativeMap?.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[QMapImporter] Error disposing native resources: {ex?.Message}");
-                }
+                _nativeMap = null;
+                _config = null;
             }
         }
 
+        private void Import(AssetImportContext ctx)
+        {
+            _nativeMap.Load(ctx.assetPath, enableCSG: _config.enableCSG, convertToOpenGL: false,
+                luxelSize: _config.luxelSize);
+            _requiredWads = _nativeMap.GetRequiredWads();
+
+            foreach (var textureName in _nativeMap.GetTextureNames())
+            {
+                var tex = MaterialManager.Instance.GetTexture(textureName, _nativeMap.GetTextureFlags(textureName),
+                    _config, _requiredWads);
+                if (tex != null)
+                {
+                    _nativeMap.RegisterTextureSize(textureName, (uint)tex.width, (uint)tex.height);
+                }
+                else
+                {
+                    _nativeMap.RegisterTextureSize(textureName, 64, 64);
+                    ctx.LogImportWarning($"[QuakeKit] Texture '{textureName}' not found, using default size 64x64");
+                }
+            }
+
+            // face types only have an effect before the geometry is built. sky faces are drawn with the sky material
+            _nativeMap.SetFaceTypes(_config.clipTexture, SurfaceType.CLIP);
+            _nativeMap.SetFaceTypes(_config.skipTexture, SurfaceType.SKIP);
+
+            _nativeMap.GenerateGeometry();
+            _nativeMap.ExportData();
+
+            var worldSpawnObj = new GameObject("worldSpawn") { isStatic = true };
+            ctx.AddObjectToAsset("worldSpawn", worldSpawnObj);
+            ctx.SetMainObject(worldSpawnObj);
+
+            var lightmap = _config.bakeLightmap ? CreateLightmapTexture(ctx) : null;
+            _lightmapped = lightmap != null;
+            if (_lightmapped)
+                worldSpawnObj.AddComponent<QKitLightmap>().lightmap = lightmap;
+
+            if (_nativeMap.SolidEntities.Count > 0)
+                SetupWorldspawn(ctx, _nativeMap.SolidEntities[0], worldSpawnObj);
+
+            foreach (var pent in _nativeMap.PointEntities)
+            {
+                var entObj = CreatePointEntityObject(ctx, NextEntityName(pent.ClassName), pent);
+                if (entObj != null)
+                    entObj.transform.parent = GetEntityFolder(ctx, pent.ClassName, worldSpawnObj).transform;
+            }
+
+            for (int i = 1; i < _nativeMap.SolidEntities.Count; i++)
+            {
+                var sent = _nativeMap.SolidEntities[i];
+                var entObj = CreateSolidEntityObject(ctx, NextEntityName(sent.ClassName), sent);
+                entObj.transform.parent = GetEntityFolder(ctx, sent.ClassName, worldSpawnObj).transform;
+            }
+
+            foreach (var mat in _usedMaterials.Values)
+                ctx.AddObjectToAsset(mat.name, mat);
+
+            SetupEvents(worldSpawnObj);
+        }
+
+        private void SetupWorldspawn(AssetImportContext ctx, MapSolidEntity worldspawn, GameObject obj)
+        {
+            var renderMesh = _solidEntityGenerator.GenerateRenderMesh(worldspawn, "worldspawn_mesh", GetMaterial,
+                out var materials);
+            if (renderMesh != null)
+            {
+                obj.AddComponent<MeshFilter>().sharedMesh = renderMesh;
+                obj.AddComponent<MeshRenderer>().sharedMaterials = materials;
+                ctx.AddObjectToAsset("worldspawn_mesh", renderMesh);
+            }
+
+            // static world collision from the brush hulls, clip brushes block too, liquids are volumes
+            var collisionMesh = _solidEntityGenerator.GenerateCollisionMesh(worldspawn, "worldspawn_collision",
+                t => t != HullType.Liquid);
+            if (collisionMesh != null)
+            {
+                obj.AddComponent<MeshCollider>().sharedMesh = collisionMesh;
+                ctx.AddObjectToAsset("worldspawn_collision", collisionMesh);
+            }
+
+            AddLiquidVolumes(ctx, worldspawn, obj);
+        }
+
+        /// <summary>
+        /// "classname_N", numbered per class in import order.
+        /// </summary>
+        private string NextEntityName(string className)
+        {
+            _classCount.TryGetValue(className, out var count);
+            _classCount[className] = count + 1;
+            return $"{className}_{count}";
+        }
+
+        /// <summary>
+        /// One material per texture and import, shared by all entities.
+        /// </summary>
+        private Material GetMaterial(string textureName)
+        {
+            if (!_usedMaterials.TryGetValue(textureName, out var mat))
+            {
+                mat = MaterialManager.Instance.CreateMaterial(textureName, _nativeMap.GetTextureFlags(textureName),
+                    _config, _requiredWads, _lightmapped);
+                _usedMaterials.Add(textureName, mat);
+            }
+
+            return mat;
+        }
+
+        /// <summary>
+        /// Bakes the lightmap with libquake (map lights) and stores it as a sub asset. The rows are uploaded as
+        /// they come, so the lightmap uvs need no flip. Values follow Quake: 128 is normal brightness.
+        /// </summary>
+        private Texture2D CreateLightmapTexture(AssetImportContext ctx)
+        {
+            var lm = _nativeMap.GetLightmap();
+            if (lm == null)
+                return null;
+
+            var tex = new Texture2D(lm.Width, lm.Height, TextureFormat.RGBA32, false, true)
+            {
+                name = "lightmap",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+            };
+            tex.SetPixelData(lm.Combined, 0);
+            tex.Apply(false, true);
+            ctx.AddObjectToAsset("lightmap", tex);
+            return tex;
+        }
+
+        private void AddLiquidVolumes(AssetImportContext ctx, MapSolidEntity entity, GameObject parent)
+        {
+            var liquids = _solidEntityGenerator.GenerateHullMeshes(entity, "liquid", t => t == HullType.Liquid);
+            if (liquids.Count == 0)
+                return;
+            var obj = new GameObject("liquids");
+            obj.transform.parent = parent.transform;
+            ctx.AddObjectToAsset("liquids", obj);
+            foreach (var mesh in liquids)
+            {
+                var col = obj.AddComponent<MeshCollider>();
+                col.convex = true;
+                col.isTrigger = true;
+                col.sharedMesh = mesh;
+                ctx.AddObjectToAsset(mesh.name, mesh);
+            }
+        }
+
+        private GameObject GetEntityFolder(AssetImportContext ctx, string className, GameObject worldSpawnObj)
+        {
+            if (!_entityFolders.TryGetValue(className, out var folderObj))
+            {
+                folderObj = new GameObject(className);
+                folderObj.transform.parent = worldSpawnObj.transform;
+                _entityFolders[className] = folderObj;
+                ctx.AddObjectToAsset(className + "_folder", folderObj);
+            }
+
+            return folderObj;
+        }
+
+        /// <summary>
+        /// Null if the map config has no prefab for the class.
+        /// </summary>
         private GameObject CreatePointEntityObject(AssetImportContext ctx, string name, MapPointEntity ent)
         {
-            var obj = GetGameObjectForPointEntity(ent);
-            if (obj == null) return obj;
+            foreach (var entry in _config.pointEntities)
+            {
+                if (ent.ClassName != entry.className || entry.prefab == null) continue;
+                var obj = Instantiate(entry.prefab);
+                entry.SetupPrefab(obj, ent.Attributes, ent.Origin, ent.Angle, _config.inverseScale);
+                obj.name = name;
+                ctx.AddObjectToAsset(name, obj);
+                return obj;
+            }
 
-            obj.name = name;
-            ctx.AddObjectToAsset(name, obj);
-            return obj;
+            return null;
         }
 
         private GameObject CreateSolidEntityObject(AssetImportContext ctx, string name, MapSolidEntity ent)
@@ -260,83 +257,78 @@ namespace QuakeKit
             var obj = _solidEntityGenerator.GetGameObjectForSolidEntity(ent);
             obj.name = name;
             ctx.AddObjectToAsset(name, obj);
-            var mr = obj.GetComponent<MeshRenderer>();
-            var mc = obj.GetComponent<MeshCollider>();
-            var mf = obj.GetComponent<MeshFilter>();
-            if (mf == null)
+
+            var mesh = _solidEntityGenerator.GenerateRenderMesh(ent, name + "_mesh", GetMaterial, out var materials);
+            if (mesh != null)
             {
-                mf = obj.AddComponent<MeshFilter>();
-            }
-
-            var materials = new List<Material>();
-            var meshes = _solidEntityGenerator.Generate(ref ent, textureName =>
-            {
-                var mat = MaterialManager.Instance.GetMaterial(textureName, configData.textureFolder, configData.materialFolder, _requiredWads);
-                _usedMaterials.TryAdd(mat.name, mat);
-                materials.Add(mat);
-                return true;
-            });
-
-            if (mr != null)
-            {
-                mr.sharedMaterials = materials.ToArray();
-            }
-
-            var mesh = new Mesh();
-            var combineFilters = new CombineInstance[meshes.Count];
-
-            for (int i = 0; i < meshes.Count; i++)
-            {
-                combineFilters[i].mesh = meshes[i];
-                combineFilters[i].transform = mf.transform.localToWorldMatrix;
-            }
-
-
-            mesh.CombineMeshes(combineFilters, false);
-            mesh.name = name + "_mesh";
-
-            // Clear UV2 to ensure clean state on reimport
-            // User can regenerate via button if needed
-            mesh.uv2 = null;
-
-            if (mf != null)
-            {
+                var mf = obj.GetComponent<MeshFilter>();
+                if (mf == null)
+                    mf = obj.AddComponent<MeshFilter>();
                 mf.sharedMesh = mesh;
+                var mr = obj.GetComponent<MeshRenderer>();
+                if (mr != null)
+                    mr.sharedMaterials = materials;
+                ctx.AddObjectToAsset(name + "_mesh", mesh);
             }
 
+            var mc = obj.GetComponent<MeshCollider>();
             if (mc != null)
-            {
-                mc.sharedMesh = mesh;
-            }
-            
-            ctx.AddObjectToAsset(name + "_mesh", mesh);
+                SetupCollider(ctx, obj, mc, ent, name);
+
             return obj;
         }
 
-        GameObject GetGameObjectForPointEntity(MapPointEntity entity)
+        /// <summary>
+        /// Brush hulls as colliders. Triggers and convex colliders get one convex collider per brush, Unity cannot
+        /// use a non convex mesh for triggers. Everything else gets one mesh with all brushes.
+        /// </summary>
+        private void SetupCollider(AssetImportContext ctx, GameObject obj, MeshCollider mc, MapSolidEntity ent, string name)
         {
-            foreach (var entry in configData.pointEntities)
+            if (mc.isTrigger || mc.convex)
             {
-                if (entity.ClassName != entry.className || entry.prefab == null) continue;
-                var prefab = Instantiate(entry.prefab);
-                entry.SetupPrefab(prefab, entity.Attributes, entity.Origin, entity.Angle, configData.inverseScale);
-                return prefab;
-            }
-            return null;
-        }
+                var hulls = _solidEntityGenerator.GenerateHullMeshes(ent, name + "_hull", _ => true);
+                if (hulls.Count == 0)
+                {
+                    mc.enabled = false;
+                    return;
+                }
 
-        private void AddEventToBus(ref QnityEventBus evbus, string targetName, UnityAction cb)
-        {
-            var ev = evbus.FindEvent(targetName);
-            if (ev == null)
-            {
-                var uev = new QnityEventEntry(targetName);
-                evbus.eventList.Add(uev);
-                UnityEventTools.AddVoidPersistentListener(uev.unityEvent, cb);
+                for (int i = 0; i < hulls.Count; i++)
+                {
+                    var col = i == 0 ? mc : obj.AddComponent<MeshCollider>();
+                    col.convex = true;
+                    col.isTrigger = mc.isTrigger;
+                    col.sharedMaterial = mc.sharedMaterial;
+                    col.sharedMesh = hulls[i];
+                    ctx.AddObjectToAsset(hulls[i].name, hulls[i]);
+                }
+
                 return;
             }
 
-            UnityEventTools.AddVoidPersistentListener(ev, cb);
+            var collision = _solidEntityGenerator.GenerateCollisionMesh(ent, name + "_collision", t => t != HullType.Liquid);
+            if (collision == null)
+            {
+                mc.enabled = false;
+                return;
+            }
+
+            mc.sharedMesh = collision;
+            ctx.AddObjectToAsset(collision.name, collision);
+        }
+
+        /// <summary>
+        /// Connects target/targetname: receivers listen on the map's event bus, emitters fire into it.
+        /// </summary>
+        private static void SetupEvents(GameObject worldSpawnObj)
+        {
+            var evbus = worldSpawnObj.AddComponent<QKitEventBus>();
+
+            foreach (var c in worldSpawnObj.GetComponentsInChildren<EntityEventReceiver>())
+                UnityEventTools.AddVoidPersistentListener(evbus.GetOrAddEvent(c.targetName), c.OnTrigger);
+
+            foreach (var c in worldSpawnObj.GetComponentsInChildren<EntityEventEmitter>())
+                c.SetLocalEventBus(evbus);
         }
     }
 }

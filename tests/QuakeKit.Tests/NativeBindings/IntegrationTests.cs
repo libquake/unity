@@ -1,298 +1,76 @@
-using Xunit;
-using QuakeKit;
-using System;
-using System.IO;
 using System.Linq;
+using QuakeKit;
 
 namespace QuakeKit.Tests.NativeBindings;
 
 /// <summary>
-/// Integration tests that verify MAP and WAD files work together
+/// MAP, WAD and lightmap working together.
 /// </summary>
-public class IntegrationTests : IDisposable
+public class IntegrationTests
 {
-    private readonly string _testMapPath;
-    private readonly string _testWadPath;
-    private NativeQFMap? _map;
-    private NativeQFWad? _wad;
-
-    public IntegrationTests()
+    [Fact]
+    public void TextureSizesFromWad_GiveTextureUVs()
     {
-        _testMapPath = Path.Combine(Directory.GetCurrentDirectory(), "test.map");
-        _testWadPath = Path.Combine(Directory.GetCurrentDirectory(), "prototype.wad");
-    }
+        using var wad = new NativeQFWad();
+        wad.Load(TestData.Path("prototype.wad"));
+        wad.GetTextureNames();
 
-    public void Dispose()
-    {
-        _map?.Dispose();
-        _wad?.Dispose();
+        using var map = TestData.LoadMap("test.map");
+        map.RegisterTextureSizesFromWad(wad);
+        map.GenerateGeometry();
+        map.ExportData();
+
+        // the box is 128 units wide with a 128 texture, so its uvs span one texture repeat
+        var us = map.SolidEntities[0].Vertices.Select(v => v.uv.x).ToArray();
+        Assert.InRange(us.Max() - us.Min(), 0.99f, 1.01f);
     }
 
     [Fact]
-    public void MapAndWad_BothFilesExist()
+    public void Lightmap_IsBakedFromTheMapLights()
     {
-        Assert.True(File.Exists(_testMapPath), "Test MAP file should exist");
-        Assert.True(File.Exists(_testWadPath), "Test WAD file should exist");
+        using var map = TestData.LoadAndExport("bake.map");
+        var lm = map.GetLightmap();
+        Assert.NotNull(lm);
+        Assert.True(lm!.Width > 0 && lm.Height > 0);
+        Assert.Equal(16f, lm.LuxelSize);
+        Assert.Equal(lm.Width * lm.Height * 4, lm.Combined.Length);
+        // static, the animated style 5 light and the switchable light (first switchable style is 32)
+        Assert.Equal(new[] { 0, 5, 32 }, lm.Layers.Select(l => l.Style).ToArray());
+        Assert.Contains(lm.Layers[0].Pixels, b => b > 0);
     }
 
     [Fact]
-    public void MapTextures_CanBeLoadedFromWad()
+    public void LightStyles_SwitchingALightOff_ChangesTheLightmap()
     {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        // Load MAP file
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        // Load WAD file
-        _wad = new NativeQFWad();
-        _wad.Load(_testWadPath);
-        _wad.GetTextureNames();
-
-        // Verify that textures used in the map submeshes can be loaded from WAD
-        var worldspawn = _map.SolidEntities[0];
-        foreach (var submesh in worldspawn.Submeshes)
-        {
-            // Use GetTexture to load actual texture data
-            var texture = _wad.GetTexture(submesh.TextureName);
-
-            Assert.NotNull(texture);
-            Assert.True(texture.Width > 0, $"Texture {submesh.TextureName} should have valid width");
-            Assert.True(texture.Height > 0, $"Texture {submesh.TextureName} should have valid height");
-        }
+        using var map = TestData.LoadAndExport("bake.map");
+        var on = map.GetLightmap()!.Combined.Sum(b => (long)b);
+        map.SetLightStyle(32, "a");
+        Assert.True(map.UpdateLightStyles(0));
+        var off = map.GetLightmap()!.Combined.Sum(b => (long)b);
+        Assert.True(off < on);
+        // nothing changes the second time
+        Assert.False(map.UpdateLightStyles(0));
     }
 
     [Fact]
-    public void RequiredWads_MatchesProvidedWad()
+    public void ExtraLights_AreBaked()
     {
-        if (!IsLibraryAvailable())
+        long Brightness(NativeQFMap m) => m.GetLightmap()!.Layers[0].Pixels.Sum(b => (long)b);
+
+        using var plain = TestData.LoadAndExport("bake.map");
+        using var lit = TestData.LoadAndExport("bake.map");
+        lit.SetExtraLights(new[]
         {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        // Map should list prototype WAD as required
-        Assert.NotEmpty(_map.RequiredWads);
-        Assert.Contains(_map.RequiredWads, wad =>
-            wad.Contains("prototype", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void SubmeshTextures_HaveValidTextureNames()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        var worldspawn = _map.SolidEntities[0];
-
-        foreach (var submesh in worldspawn.Submeshes)
-        {
-            // Texture name should exist and not be empty
-            Assert.NotNull(submesh.TextureName);
-            Assert.NotEmpty(submesh.TextureName);
-
-            // For test.map, we know the texture is "128_blue_3"
-            Assert.Equal("128_blue_3", submesh.TextureName);
-        }
-    }
-
-    [Fact]
-    public void TextureDimensions_CanBeRetrievedFromWad()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        _wad = new NativeQFWad();
-        _wad.Load(_testWadPath);
-        _wad.GetTextureNames();
-
-        // Get texture names from submeshes
-        var worldspawn = _map.SolidEntities[0];
-        foreach (var submesh in worldspawn.Submeshes)
-        {
-            var texture = _wad.GetTexture(submesh.TextureName);
-
-            Assert.NotNull(texture);
-            Assert.True(texture.Width > 0, $"Texture {submesh.TextureName} width should be positive");
-            Assert.True(texture.Height > 0, $"Texture {submesh.TextureName} height should be positive");
-
-            // Verify RGBA data size matches dimensions
-            uint expectedSize = texture.Width * texture.Height * 4;
-            Assert.Equal(expectedSize, (uint)texture.Data.Length);
-        }
-    }
-
-    [Fact]
-    public void GeometryAndTextures_CompleteWorkflow()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        // This test simulates the complete import workflow
-
-        // Step 1: Load MAP file
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-
-        // Step 2: Set special face types
-        _map.SetFaceTypes("clip;trigger", SurfaceType.CLIP);
-
-        // Step 3: Export geometry
-        _map.ExportData();
-
-        Assert.NotEmpty(_map.SolidEntities);
-
-        // Step 4: Load required WAD
-        _wad = new NativeQFWad();
-        _wad.Load(_testWadPath);
-        _wad.GetTextureNames();
-
-        Assert.NotEmpty(_wad.Textures);
-
-        // Step 5: Verify we can create mesh data
-        var worldspawn = _map.SolidEntities[0];
-
-        Assert.NotEmpty(worldspawn.Vertices);
-        Assert.NotEmpty(worldspawn.Indices);
-        Assert.NotEmpty(worldspawn.Submeshes);
-
-        // Step 6: Verify submesh data is valid
-        foreach (var submesh in worldspawn.Submeshes)
-        {
-            // Verify vertex range
-            Assert.True(submesh.VertexOffset + submesh.VertexCount <= worldspawn.Vertices.Length);
-
-            // Verify index range
-            Assert.True(submesh.IndexOffset + submesh.IndexCount <= worldspawn.Indices.Length);
-
-            // Verify we can get texture for this submesh
-            var texture = _wad.GetTexture(submesh.TextureName);
-            Assert.NotNull(texture);
-        }
-    }
-
-    [Fact]
-    public void UVCoordinates_AreWithinValidRange()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        var worldspawn = _map.SolidEntities[0];
-
-        foreach (var vertex in worldspawn.Vertices)
-        {
-            // UV coordinates can be outside 0-1 range (for tiling),
-            // but should be reasonable values
-            Assert.True(Math.Abs(vertex.uv.x) < 1000, "UV X coordinate should be reasonable");
-            Assert.True(Math.Abs(vertex.uv.y) < 1000, "UV Y coordinate should be reasonable");
-        }
-    }
-
-    [Fact]
-    public void Normals_AreNormalized()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        var worldspawn = _map.SolidEntities[0];
-
-        foreach (var vertex in worldspawn.Vertices)
-        {
-            // Calculate normal length
-            float length = (float)Math.Sqrt(
-                vertex.normal.x * vertex.normal.x +
-                vertex.normal.y * vertex.normal.y +
-                vertex.normal.z * vertex.normal.z);
-
-            // Should be approximately 1.0 (normalized)
-            // Allow some tolerance for floating point precision
-            Assert.True(Math.Abs(length - 1.0f) < 0.01f,
-                $"Normal should be normalized, got length {length}");
-        }
-    }
-
-    [Fact]
-    public void Indices_FormValidTriangles()
-    {
-        if (!IsLibraryAvailable())
-        {
-            return;
-        }
-
-        _map = new NativeQFMap();
-        _map.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-        _map.GenerateGeometry();
-        _map.ExportData();
-
-        var worldspawn = _map.SolidEntities[0];
-
-        // Indices should be in groups of 3 (triangles)
-        Assert.True(worldspawn.Indices.Length % 3 == 0,
-            "Index count should be divisible by 3 for triangles");
-
-        // All indices should be valid (within vertex array bounds)
-        foreach (var index in worldspawn.Indices)
-        {
-            Assert.True(index < worldspawn.Vertices.Length,
-                $"Index {index} should be within vertex array bounds");
-        }
-    }
-
-    private bool IsLibraryAvailable()
-    {
-        try
-        {
-            using var testMap = new NativeQFMap();
-            testMap.Load(_testMapPath, enableCSG: true, convertToOpenGL: false);
-            return true;
-        }
-        catch (DllNotFoundException)
-        {
-            return false;
-        }
-        catch (Exception)
-        {
-            return true;
-        }
+            new QLibLight
+            {
+                type = LightType.Point,
+                position = new QLibVec3(600, 400, 100),
+                color = new QLibVec3(1, 1, 1),
+                intensity = 300,
+                distanceScale = 1,
+                castShadows = 1,
+            },
+        });
+        Assert.True(Brightness(lit) > Brightness(plain));
     }
 }

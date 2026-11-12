@@ -36,14 +36,34 @@
              Link="NativeBindings/NativeQFWad.cs" />
     <Compile Include="../../com.quakekit.unity/Editor/NativeBindings/NativeQFBsp.cs" 
              Link="NativeBindings/NativeQFBsp.cs" />
+    <Compile Include="../../com.quakekit.unity/Runtime/QKitConvert.cs"
+             Link="Runtime/QKitConvert.cs" />
   </ItemGroup>
 
   <!-- Include test data files and native library -->
   <ItemGroup>
     <None Include="../data/test.map" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../data/prototype.wad" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="../../com.quakekit.unity/Editor/NativeBindings/Libs/macos/libquakelib.dylib" 
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/bake.map" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/tooltextures.map" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/lightstyles.bsp" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/fullbright.bsp" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/sky_alpha.map" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/sky_alpha.bsp" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/sky_alpha.wad" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../data/lightstyles.lit" CopyToOutputDirectory="PreserveNewest" />
+
   </ItemGroup>
 
+  <!-- native library of the current OS, QLIB_NATIVE=/path/to/lib overrides it (e.g. a fresh libquake build) -->
+  <PropertyGroup>
+    <QLibLibs>../../com.quakekit.unity/Editor/NativeBindings/Libs</QLibLibs>
+    <QLibNative Condition="'$(QLIB_NATIVE)' != ''">$(QLIB_NATIVE)</QLibNative>
+    <QLibNative Condition="'$(QLibNative)' == '' And $([MSBuild]::IsOSPlatform('OSX'))">$(QLibLibs)/macos/libquakelib.dylib</QLibNative>
+    <QLibNative Condition="'$(QLibNative)' == '' And $([MSBuild]::IsOSPlatform('Linux'))">$(QLibLibs)/linux/libquakelib.so</QLibNative>
+    <QLibNative Condition="'$(QLibNative)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">$(QLibLibs)/win/quakelib.dll</QLibNative>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(QLibNative)" Link="$([System.IO.Path]::GetFileName('$(QLibNative)'))" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

@@ -23,16 +23,18 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
-    - _BaseMap:
-        m_Texture: {fileID: -5056655886467769742, guid: fbba1a69f47eb42cebd54ee19c096370, type: 3}
+    - _MainTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _SkyFront:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _Repeat: 4
-    m_Colors:
-    - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
-    - _ScrollSpeed1: {r: 0.05, g: 0.01, b: 0, a: 0}
-    - _ScrollSpeed2: {r: 0.02, g: 0.03, b: 0, a: 0}
+    - _BackSpeed: 8
+    - _FrontSpeed: 16
+    m_Colors: []
   m_BuildTextureStacks: []
   m_AllowLocking: 1

@@ -7,22 +7,24 @@ namespace QuakeKit
         [HideInInspector]
         public float inverseScale = 1;
 
-        static public bool ToVector3(string val, out Vector3 vec3)
+        /// <summary>
+        /// Parses a Quake "x y z" vector and converts it to Unity axes (no scaling).
+        /// </summary>
+        public static bool ToVector3(string val, out Vector3 vec3)
         {
-            var vals = val.Split(" ");
-            if (vals.Length < 3)
+            if (!QKitConvert.TryParseVector3(val, out var quake))
             {
                 vec3 = Vector3.zero;
                 return false;
             }
-            vec3 = new Vector3(-float.Parse(vals[1]), float.Parse(vals[2]), float.Parse(vals[0]));
+
+            vec3 = QKitConvert.ToUnityDirection(quake);
             return true;
         }
 
-        static public Vector3 ToVector3(string val)
+        public static Vector3 ToVector3(string val)
         {
-            Vector3 vec;
-            ToVector3(val, out vec);
+            ToVector3(val, out var vec);
             return vec;
         }
 

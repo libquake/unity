@@ -1,16 +1,20 @@
+using System.IO;
 using UnityEditor;
-using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Qunity
+namespace QuakeKit
 {
-    public class QPathTools
+    public static class QPathTools
     {
+        /// <summary>
+        /// Path of the asset of the given type named like the texture, below folder. Texture names may contain
+        /// sub folders ("base/wall1"). Empty if there is none.
+        /// </summary>
         public static string GetTextureAssetPath(string texName, string folder, string type)
         {
             var fullPath = folder;
-            var segments = texName.Split("/");
-            texName = segments[^1];
+            var segments = texName.Split('/');
+            texName = segments[segments.Length - 1];
             for (int i = 0; i < segments.Length - 1; i++)
             {
                 fullPath += "/" + segments[i];
@@ -20,22 +24,18 @@ namespace Qunity
             {
                 return "";
             }
+
+            // the search matches substrings, pick the exact name
             var guids = AssetDatabase.FindAssets($"\"{texName}\" t:{type}", new[] { fullPath });
-            if (guids.Length > 0)
+            if (guids.Length == 1)
+                return AssetDatabase.GUIDToAssetPath(guids[0]);
+            foreach (var guid in guids)
             {
-                if (guids.Length <= 1) return AssetDatabase.GUIDToAssetPath(guids[0]);
-                foreach (var guid in guids)
-                {
-                    var p = AssetDatabase.GUIDToAssetPath(guid).Split("/");
-                    var cmpName = p[^1];
-                    cmpName = cmpName[..cmpName.LastIndexOf('.')];
-                    if (cmpName == texName)
-                    {
-                        return AssetDatabase.GUIDToAssetPath(guids[0]);
-                    }
-                }
-                return "";
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                if (Path.GetFileNameWithoutExtension(path) == texName)
+                    return path;
             }
+
             return "";
         }
 
@@ -47,17 +47,13 @@ namespace Qunity
             switch (GraphicsSettings.defaultRenderPipeline.GetType().Name)
             {
                 case "UniversalRenderPipelineAsset":
-                {
                     pipelinePath = "URP";
                     baseColorShaderParam = "_BaseMap";
                     break;
-                }
                 case "HDRenderPipelineAsset":
-                {
                     pipelinePath = "HDRP";
                     baseColorShaderParam = "_BaseColorMap";
                     break;
-                }
             }
         }
     }

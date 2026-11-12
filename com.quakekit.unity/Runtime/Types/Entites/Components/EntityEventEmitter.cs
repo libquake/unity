@@ -1,34 +1,42 @@
 using UnityEngine;
 
-
-public class EntityEventEmitter : MonoBehaviour
+namespace QuakeKit
 {
-    public string target;
-    public bool once;
-    protected bool triggered = false;
-
-    [SerializeField] protected QnityEventBus localEventBus;
-
-    public void SetTarget(string targetName)
+    public class EntityEventEmitter : MonoBehaviour
     {
-        target = targetName;
-    }
+        public string target;
+        public bool once;
+        protected bool triggered = false;
 
-    public void SetLocalEventBus(QnityEventBus eb)
-    {
-        localEventBus = eb;
-    }
+        [SerializeField] protected QKitEventBus localEventBus;
 
-    protected virtual void TriggerEntered(Collider col)
-    {
-        if (target != "" && (!once || !triggered))
+        public void SetTarget(string targetName)
         {
+            target = targetName;
+        }
+
+        public void SetLocalEventBus(QKitEventBus eb)
+        {
+            localEventBus = eb;
+        }
+
+        protected virtual void TriggerEntered(Collider col)
+        {
+            if (string.IsNullOrEmpty(target) || (once && triggered))
+                return;
+            if (localEventBus == null)
+            {
+                Debug.LogWarning($"{name}: no event bus, cannot fire '{target}'", this);
+                return;
+            }
+
+            triggered = true;
             localEventBus.FireEvent(target);
         }
-    }
 
-    private void OnTriggerEnter(Collider other)
-    {
-        TriggerEntered(other);
+        private void OnTriggerEnter(Collider other)
+        {
+            TriggerEntered(other);
+        }
     }
 }

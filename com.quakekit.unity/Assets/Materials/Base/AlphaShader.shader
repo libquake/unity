@@ -7,12 +7,13 @@ Shader "Custom/AlphaShader"
         _Glossiness ("Smoothness", Range(0,1)) = 0.5
         _Metallic ("Metallic", Range(0,1)) = 0.0
         _Cutoff("Alpha cutoff", Range(0,1)) = 0.5
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
     }
     SubShader
     {
         Tags {"Queue"="AlphaTest" "IgnoreProjector"="True" "RenderType"="TransparentCutout"}
         LOD 200
-        Cull Off
+        Cull [_Cull]
 
         CGPROGRAM
         // Physically based Standard lighting model, and enable shadows on all light types
