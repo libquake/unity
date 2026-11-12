@@ -40,6 +40,8 @@ https://github.com/libquake/unity.git?path=/com.libquake.unity
 
 if you don't have git installed in your `PATH` environment, you can also download the package via github and install it as a local package.
 
+The documentation and a guide are at [libquake.github.io/unity](https://libquake.github.io/unity/), the source is in [docs/](docs/).
+
 <br>
 <br>
 

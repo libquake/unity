@@ -5,7 +5,7 @@
   "description": "Quake map and WAD importer based on libquake",
   "unity": "2021.1",
   "unityRelease": "0b5",
-  "documentationUrl": "https://github.com/libquake/unity#readme",
+  "documentationUrl": "https://libquake.github.io/unity/",
   "licensesUrl": "https://github.com/libquake/unity/blob/main/LICENSE",
   "keywords": [
     "quake",
