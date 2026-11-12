@@ -24,15 +24,15 @@ jobs:
           dotnet-version: ${{ matrix.dotnet }}
 
       - name: Restore dependencies
-        run: dotnet restore tests/QuakeKit.Tests/QuakeKit.Tests.csproj
+        run: dotnet restore tests/LibQuake.Tests/LibQuake.Tests.csproj
         working-directory: ${{ github.workspace }}
 
       - name: Build
-        run: dotnet build tests/QuakeKit.Tests/QuakeKit.Tests.csproj --no-restore
+        run: dotnet build tests/LibQuake.Tests/LibQuake.Tests.csproj --no-restore
         working-directory: ${{ github.workspace }}
 
       - name: Test
-        run: dotnet test tests/QuakeKit.Tests/QuakeKit.Tests.csproj --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+        run: dotnet test tests/LibQuake.Tests/LibQuake.Tests.csproj --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
         working-directory: ${{ github.workspace }}
 
       - name: Upload test results

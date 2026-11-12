@@ -1,4 +1,4 @@
-# QuakeKit Unit Tests
+# LibQuake Unit Tests
 
 This directory contains unit tests that can run outside of Unity using standard .NET testing tools.
 
@@ -8,13 +8,13 @@ This directory contains unit tests that can run outside of Unity using standard 
 
 ```bash
 # Run all tests
-dotnet test tests/QuakeKit.Tests/QuakeKit.Tests.csproj
+dotnet test tests/LibQuake.Tests/LibQuake.Tests.csproj
 
 # Run with detailed output
-dotnet test tests/QuakeKit.Tests/QuakeKit.Tests.csproj --verbosity detailed
+dotnet test tests/LibQuake.Tests/LibQuake.Tests.csproj --verbosity detailed
 
 # Run with code coverage
-dotnet test tests/QuakeKit.Tests/QuakeKit.Tests.csproj --collect:"XPlat Code Coverage"
+dotnet test tests/LibQuake.Tests/LibQuake.Tests.csproj --collect:"XPlat Code Coverage"
 ```
 
 ### From IDE

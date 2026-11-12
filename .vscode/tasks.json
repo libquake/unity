@@ -7,7 +7,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/tests/QuakeKit.Tests/QuakeKit.Tests.csproj"
+                "${workspaceFolder}/tests/LibQuake.Tests/LibQuake.Tests.csproj"
             ],
             "problemMatcher": "$msCompile"
         }

@@ -23,7 +23,7 @@ jobs:
           elif [ "${{ github.event.action }}" = "libquake-release" ]; then
             VERSION="${{ github.event.client_payload.version }}"
           else
-            VERSION=$(gh release view --repo QuakeKit/libquake --json tagName -q .tagName)
+            VERSION=$(gh release view --repo libquake/libquake --json tagName -q .tagName)
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         env:
@@ -37,12 +37,12 @@ jobs:
           # Check what assets are available
           echo "Checking assets for release ${{ steps.release.outputs.version }}..."
           gh release view ${{ steps.release.outputs.version }} \
-            --repo QuakeKit/libquake \
+            --repo libquake/libquake \
             --json assets -q '.assets[].name'
 
           # Download available assets
           gh release download ${{ steps.release.outputs.version }} \
-            --repo QuakeKit/libquake \
+            --repo libquake/libquake \
             --pattern "libquake-*.zip" || {
             echo "Error: No assets found matching pattern libquake-*.zip"
             echo "Please ensure the release has the required platform binaries:"
@@ -60,7 +60,7 @@ jobs:
 
       - name: Extract and organize binaries
         run: |
-          TARGET_DIR="com.quakekit.unity/Editor/NativeBindings/Libs"
+          TARGET_DIR="com.libquake.unity/Editor/NativeBindings/Libs"
           mkdir -p "$TARGET_DIR"/{linux,macos,win}
 
           # Linux
@@ -79,7 +79,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add com.quakekit.unity/Editor/NativeBindings/Libs/
+          git add com.libquake.unity/Editor/NativeBindings/Libs/
 
           if git diff --staged --quiet; then
             echo "No changes to commit"

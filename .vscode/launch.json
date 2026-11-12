@@ -6,9 +6,9 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/tests/QuakeKit.Tests/bin/Debug/net8.0/QuakeKit.Tests.dll",
+            "program": "${workspaceFolder}/tests/LibQuake.Tests/bin/Debug/net8.0/LibQuake.Tests.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/tests/QuakeKit.Tests",
+            "cwd": "${workspaceFolder}/tests/LibQuake.Tests",
             "stopAtEntry": false,
             "console": "internalConsole",
             "env": {

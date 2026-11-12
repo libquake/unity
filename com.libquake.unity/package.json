@@ -1,0 +1,20 @@
+{
+  "name": "com.libquake.unity",
+  "version": "1.0.0",
+  "displayName": "LibQuake",
+  "description": "Quake map and WAD importer based on libquake",
+  "unity": "2021.1",
+  "unityRelease": "0b5",
+  "documentationUrl": "https://github.com/libquake/unity#readme",
+  "licensesUrl": "https://github.com/libquake/unity/blob/main/LICENSE",
+  "keywords": [
+    "quake",
+    "trenchbroom",
+    "leveldesign"
+  ],
+  "author": {
+    "name": "Tino Goehlert",
+    "email": "t.goehlert@gmail.com",
+    "url": "https://github.com/libquake"
+  }
+}
